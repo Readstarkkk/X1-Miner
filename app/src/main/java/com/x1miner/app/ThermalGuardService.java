@@ -129,7 +129,7 @@ public final class ThermalGuardService extends Service {
         isMonitoring = false;
         handler.removeCallbacks(monitorRunnable);
         if (Build.VERSION.SDK_INT >= 29 && powerManager != null && thermalListener != null) {
-            try { powerManager.removeThermalStatusChangedListener(thermalListener); }
+            try { powerManager.removeThermalStatusListener(thermalListener); }
             catch (Exception ignored) { }
         }
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
