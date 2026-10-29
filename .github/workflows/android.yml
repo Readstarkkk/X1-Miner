@@ -1,4 +1,6 @@
-name: Build X1 Monitor APK
+
+
+name: Build X1 Miner APK
 
 on:
   workflow_dispatch:
@@ -11,6 +13,7 @@ permissions:
 jobs:
   build-debug-apk:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -21,21 +24,21 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # Explicitly override android-actions/setup-android's legacy default
-      # package list (which includes the removed SDK package named "tools").
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
+          cmdline-tools-version: 12266719
           accept-android-sdk-licenses: true
-          packages: platform-tools
+          log-accepted-android-sdk-licenses: true
 
       - name: Install Android SDK components
         run: |
           sdkmanager --install \
+            "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-      - name: Set up compatible Gradle
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
@@ -43,9 +46,8 @@ jobs:
       - name: Check source layout
         run: |
           test -f app/src/main/AndroidManifest.xml
-          test -f app/src/main/java/com/x1miner/app/MainActivity.java
-          test -f app/src/main/java/com/x1miner/app/ThermalGuardService.java
-          ! grep -R -n -E '^(<<<<<<<|=======|>>>>>>>)' app .github
+          find app/src/main/java -type f -name '*.java'
+          ! grep -R -n -E '^(<<<<<<<|=======|>>>>>>>)' app
 
       - name: Build debug APK
         run: gradle --no-daemon --stacktrace assembleDebug
@@ -56,7 +58,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: X1-Monitor-debug-apk
+          name: X1-Miner-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
