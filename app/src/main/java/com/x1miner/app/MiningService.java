@@ -189,6 +189,24 @@ public final class MiningService extends Service {
                 builder = new ProcessBuilder(executable.getAbsolutePath(), "-a", "scrypt", "-o", poolUrl,
                         "-u", wallet.trim(), "-p", "x", "-t", Integer.toString(threads), "--hash-meter");
             }
+            if (coinIndex != 0) {
+                String nativeDir = getApplicationInfo().nativeLibraryDir;
+                File runtime = new File(nativeDir, "libc++_shared.so");
+                if (!runtime.isFile()) {
+                    failStart(startId,
+                        "libc++_shared.so ausente no APK. Recompile pelo GitHub Actions.");
+                    return;
+                }
+
+                Map<String, String> env = builder.environment();
+                String oldPath = env.get("LD_LIBRARY_PATH");
+                String libraryPath = nativeDir;
+                if (oldPath != null && !oldPath.trim().isEmpty()) {
+                    libraryPath += File.pathSeparator + oldPath;
+                }
+                env.put("LD_LIBRARY_PATH", libraryPath);
+            }
+
             builder.redirectErrorStream(true);
             acquireWakeLock();
             process = builder.start();
