@@ -2,7 +2,11 @@ package com.x1miner.app;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.graphics.Path;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
@@ -75,10 +79,22 @@ public class MainActivity extends Activity {
     private FrameLayout contentHost;
     private int currentTab = 0;
 
+    private final BroadcastReceiver miningReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if ((currentTab == 0 || currentTab == 1) && contentHost != null) showTab(currentTab);
+        }
+    };
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        IntentFilter minerFilter = new IntentFilter(MiningService.ACTION_STATS);
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(miningReceiver, minerFilter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(miningReceiver, minerFilter);
+        }
         getWindow().setStatusBarColor(BLACK);
         getWindow().setNavigationBarColor(BLACK);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -90,6 +106,11 @@ public class MainActivity extends Activity {
             applySavedBackground();
             showTab(prefs.getInt("last_tab", 0));
         }, 850L);
+    }
+
+    @Override protected void onDestroy() {
+        try { unregisterReceiver(miningReceiver); } catch (Exception ignored) { }
+        super.onDestroy();
     }
 
     /** Simple splash: existing X1 Miner cover on black, without extra artwork. */
@@ -203,18 +224,29 @@ public class MainActivity extends Activity {
         sectionHeading(content, "Painel de mineração", "Acompanhe o motor, a moeda e as proteções do dispositivo.");
 
         LinearLayout status = card(content);
-        rowTitle(status, "STATUS DO MOTOR", "NÃO CONECTADO", MUTED);
-        TextView engine = text("Motor de mineração não integrado", 16, WHITE, true);
+        String engineState = prefs.getString("miner_state", "stopped");
+        String stateLabel = "running".equals(engineState) ? "MINERANDO"
+                : "connecting".equals(engineState) ? "CONECTANDO"
+                : "error".equals(engineState) ? "ERRO" : "PARADO";
+        int stateColor = "running".equals(engineState) ? GREEN
+                : "error".equals(engineState) ? RED
+                : "connecting".equals(engineState) ? GOLD : MUTED;
+        rowTitle(status, "STATUS DO MOTOR", stateLabel, stateColor);
+        TextView engine = text("Motor nativo · Monero / RandomX", 16, WHITE, true);
         LinearLayout.LayoutParams engineLp = new LinearLayout.LayoutParams(-1, -2);
         engineLp.topMargin = dp(6);
         status.addView(engine, engineLp);
-        status.addView(text("Esta versão ainda não conecta a pools nem calcula hashrate real.", 12, MUTED, false));
+        status.addView(text(prefs.getString("miner_status", "Sessão parada"), 12, MUTED, false));
         divider(status);
         LinearLayout stats = new LinearLayout(this);
         stats.setOrientation(LinearLayout.HORIZONTAL);
-        stats.addView(metric("HASHRATE", "0 H/s", "sem amostras", true), new LinearLayout.LayoutParams(0, -2, 1));
-        stats.addView(metric("SHARES ACEITAS", "0", "sem sessão", false), new LinearLayout.LayoutParams(0, -2, 1));
-        stats.addView(metric("TEMPO", "00:00:00", "sem sessão", false), new LinearLayout.LayoutParams(0, -2, 1));
+        String currentHashrate = prefs.getString("miner_hashrate", "0 H/s");
+        int currentAccepted = prefs.getInt("miner_accepted", 0);
+        int currentRejected = prefs.getInt("miner_rejected", 0);
+        long currentStarted = prefs.getLong("miner_started_ms", 0L);
+        stats.addView(metric("HASHRATE", currentHashrate, "taxa informada pelo motor", true), new LinearLayout.LayoutParams(0, -2, 1));
+        stats.addView(metric("SHARES ACEITAS", String.valueOf(currentAccepted), currentRejected + " rejeitadas", false), new LinearLayout.LayoutParams(0, -2, 1));
+        stats.addView(metric("TEMPO", formatElapsed(currentStarted), currentStarted > 0 ? "sessão atual" : "sem sessão ativa", false), new LinearLayout.LayoutParams(0, -2, 1));
         status.addView(stats);
 
         LinearLayout config = card(content);
@@ -282,6 +314,10 @@ public class MainActivity extends Activity {
 
         Button start = primaryButton("▶  Iniciar mineração");
         start.setOnClickListener(v -> {
+            if (coinSpinner.getSelectedItemPosition() != 0) {
+                toast("O motor nativo disponível nesta versão é somente para Monero (RandomX).");
+                return;
+            }
             BatteryInfo current = getBatteryInfo();
             if (current.level < 0) {
                 toast("Bloqueado: não foi possível ler o nível da bateria.");
@@ -307,33 +343,67 @@ public class MainActivity extends Activity {
                 toast("Informe a pool e a porta primeiro.");
                 return;
             }
-            toast("Nenhuma mineração foi iniciada: o motor real ainda não está integrado.");
+            Runnable launchMiner = () -> {
+                Intent service = new Intent(MainActivity.this, MiningService.class);
+                service.setAction(MiningService.ACTION_START);
+                service.putExtra(MiningService.EXTRA_WALLET, wallet.getText().toString().trim());
+                service.putExtra(MiningService.EXTRA_POOL, pool.getText().toString().trim());
+                service.putExtra(MiningService.EXTRA_COIN_INDEX, coinSpinner.getSelectedItemPosition());
+                try {
+                    if (Build.VERSION.SDK_INT >= 26) startForegroundService(service);
+                    else startService(service);
+                    toast("Solicitação enviada. Confira o estado do motor e a notificação do X1 Miner.");
+                } catch (Exception e) {
+                    toast("Não foi possível iniciar o serviço: " + e.getClass().getSimpleName());
+                }
+            };
+            if (prefs.getBoolean("confirm_start", true)) {
+                new AlertDialog.Builder(MainActivity.this)
+                        .setTitle("Iniciar mineração Monero?")
+                        .setMessage("A mineração mantém a CPU ocupada e pode aquecer o aparelho. O motor começa limitado a uma fração dos núcleos.")
+                        .setNegativeButton("Cancelar", (dialog, which) -> { })
+                        .setPositiveButton("Iniciar", (dialog, which) -> launchMiner.run())
+                        .show();
+            } else {
+                launchMiner.run();
+            }
         });
         LinearLayout.LayoutParams startLp = new LinearLayout.LayoutParams(-1, dp(52));
         startLp.topMargin = dp(2);
         startLp.bottomMargin = dp(10);
         content.addView(start, startLp);
-        note(content, "Sem hashrate, shares ou ganhos simulados. Os indicadores permanecem zerados até existir um motor real.");
+        Button stop = secondaryButton("■  Parar mineração");
+        LinearLayout.LayoutParams stopLp = new LinearLayout.LayoutParams(-1, dp(46));
+        stopLp.bottomMargin = dp(8);
+        content.addView(stop, stopLp);
+        stop.setOnClickListener(v -> {
+            Intent service = new Intent(MainActivity.this, MiningService.class);
+            service.setAction(MiningService.ACTION_STOP);
+            try { startService(service); toast("Comando de parada enviado."); }
+            catch (Exception e) { toast("Não foi possível enviar a parada: " + e.getClass().getSimpleName()); }
+        });
+        note(content, "Hashrate e shares são lidos do motor nativo. Ganhos/pagamentos não são estimados pelo aplicativo.");
     }
 
     private void renderGraph(LinearLayout content) {
         sectionHeading(content, "Gráfico", "Estatísticas por moeda, com dados reais quando houver um motor ativo.");
         LinearLayout top = card(content);
-        cardHeading(top, "Estatísticas gerais", "Esta versão ainda não registrou sessões de mineração.");
+        long graphStarted = prefs.getLong("miner_started_ms", 0L);
+        cardHeading(top, "Estatísticas da sessão", prefs.getString("miner_status", "Sem sessão ativa"));
         LinearLayout row1 = new LinearLayout(this);
         row1.setOrientation(LinearLayout.HORIZONTAL);
-        row1.addView(metric("TEMPO TOTAL", "0 min", "tempo minerando", true), new LinearLayout.LayoutParams(0, -2, 1));
-        row1.addView(metric("HASHES", "0", "sem amostras", false), new LinearLayout.LayoutParams(0, -2, 1));
+        row1.addView(metric("TEMPO DA SESSÃO", formatElapsed(graphStarted), graphStarted > 0 ? "sessão atual" : "sem sessão", true), new LinearLayout.LayoutParams(0, -2, 1));
+        row1.addView(metric("HASHRATE", prefs.getString("miner_hashrate", "0 H/s"), "informado pelo motor", false), new LinearLayout.LayoutParams(0, -2, 1));
         top.addView(row1);
         LinearLayout row2 = new LinearLayout(this);
         row2.setOrientation(LinearLayout.HORIZONTAL);
-        row2.addView(metric("SHARES ACEITAS", "0", "pool não conectada", false), new LinearLayout.LayoutParams(0, -2, 1));
+        row2.addView(metric("SHARES ACEITAS", String.valueOf(prefs.getInt("miner_accepted", 0)), prefs.getInt("miner_rejected", 0) + " rejeitadas", false), new LinearLayout.LayoutParams(0, -2, 1));
         row2.addView(metric("GANHOS", "N/D", "sem dados de pool", false), new LinearLayout.LayoutParams(0, -2, 1));
         top.addView(row2);
 
         LinearLayout chart = card(content);
-        cardHeading(chart, "Taxa de hash ao longo do tempo", "Sem amostras reais para desenhar o gráfico.");
-        chart.addView(new EmptyGraphView(this), new LinearLayout.LayoutParams(-1, dp(190)));
+        cardHeading(chart, "Taxa de hash ao longo do tempo", "Amostras reais informadas pelo motor nativo.");
+        chart.addView(new MiningGraphView(this, prefs), new LinearLayout.LayoutParams(-1, dp(190)));
         LinearLayout perCoin = card(content);
         cardHeading(perCoin, "Resumo por moeda", "Os algoritmos não são comparados entre si.");
         for (int i = 0; i < coins.length; i++) {
@@ -342,7 +412,8 @@ public class MainActivity extends Activity {
             line.setOrientation(LinearLayout.HORIZONTAL);
             TextView c = text(coins[i], 13, WHITE, true);
             line.addView(c, new LinearLayout.LayoutParams(0, dp(40), 1));
-            line.addView(text("0 shares  •  sem sessão", 11, MUTED, false));
+            String coinShares = i == 0 ? prefs.getInt("miner_accepted", 0) + " shares aceitas" : "motor não instalado";
+            line.addView(text(coinShares, 11, MUTED, false));
             perCoin.addView(line);
             if (i < coins.length - 1) divider(perCoin);
         }
@@ -352,7 +423,7 @@ public class MainActivity extends Activity {
     private void renderSettings(LinearLayout content) {
         sectionHeading(content, "Configurações", "Preferências salvas localmente neste dispositivo.");
         LinearLayout performance = card(content);
-        cardHeading(performance, "Desempenho", "Essas opções ficam salvas; ainda não controlam um motor real.");
+        cardHeading(performance, "Desempenho", "Threads e perfil controlam o motor; o teto de hashrate ainda não é aplicado.");
         TextView threadLabel = label("Threads da CPU");
         performance.addView(threadLabel);
         int cores = Math.max(1, Runtime.getRuntime().availableProcessors());
@@ -402,7 +473,7 @@ public class MainActivity extends Activity {
         performance.addView(validateLimit, validLp);
 
         LinearLayout automation = card(content);
-        cardHeading(automation, "Automação", "Preferências para quando o serviço de mineração existir.");
+        cardHeading(automation, "Automação", "Estes toggles ainda não estão ligados ao serviço nativo.");
         addPreference(automation, "Execução em segundo plano", "background", false);
         addPreference(automation, "Reconectar à pool automaticamente", "auto_reconnect", true);
         addPreference(automation, "Minerar somente no Wi-Fi", "wifi_only", false);
@@ -415,7 +486,7 @@ public class MainActivity extends Activity {
         addPreference(protect, "Exigir confirmação antes de iniciar", "confirm_start", true);
 
         LinearLayout notifications = card(content);
-        cardHeading(notifications, "Notificações", "Preferências locais de avisos.");
+        cardHeading(notifications, "Notificações", "A notificação do serviço é obrigatória; estes toggles ainda não filtram os avisos.");
         addPreference(notifications, "Alertas de sessão", "notify_session", true);
         addPreference(notifications, "Alertas de temperatura", "notify_temp", true);
         addPreference(notifications, "Alertas de bateria", "notify_battery", true);
@@ -874,6 +945,15 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) { }
     }
 
+    private String formatElapsed(long startedAt) {
+        if (startedAt <= 0L) return "00:00:00";
+        long seconds = Math.max(0L, (System.currentTimeMillis() - startedAt) / 1000L);
+        long hours = seconds / 3600L;
+        long minutes = (seconds % 3600L) / 60L;
+        long remaining = seconds % 60L;
+        return String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, remaining);
+    }
+
     private void toast(String message) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
     }
@@ -882,14 +962,17 @@ public class MainActivity extends Activity {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
     }
 
-    private static class EmptyGraphView extends View {
+    private static class MiningGraphView extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        EmptyGraphView(Context context) { super(context); }
+        private final SharedPreferences prefs;
+        MiningGraphView(Context context, SharedPreferences prefs) { super(context); this.prefs = prefs; }
+
         @Override protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
             float density = getResources().getDisplayMetrics().density;
-            float left = 28 * density, right = getWidth() - 10 * density;
-            float top = 14 * density, bottom = getHeight() - 28 * density;
+            float left = 30 * density, right = getWidth() - 10 * density;
+            float top = 14 * density, bottom = getHeight() - 27 * density;
+            paint.setStyle(Paint.Style.STROKE);
             paint.setStrokeWidth(1 * density);
             paint.setColor(0xFF29251F);
             for (int i = 0; i < 5; i++) {
@@ -900,12 +983,49 @@ public class MainActivity extends Activity {
                 float x = left + (right - left) * i / 4f;
                 canvas.drawLine(x, top, x, bottom, paint);
             }
+            JSONArray samples;
+            try { samples = new JSONArray(prefs.getString("miner_samples", "[]")); }
+            catch (Exception ignored) { samples = new JSONArray(); }
+            if (samples.length() == 0) {
+                paint.setStyle(Paint.Style.FILL);
+                paint.setColor(MUTED);
+                paint.setTextSize(12 * density);
+                paint.setTextAlign(Paint.Align.CENTER);
+                canvas.drawText("Aguardando dados reais da pool", (left + right) / 2f, (top + bottom) / 2f, paint);
+                return;
+            }
+            double max = 0.0;
+            double[] values = new double[samples.length()];
+            for (int i = 0; i < samples.length(); i++) {
+                try { values[i] = Math.max(0.0, samples.getJSONObject(i).optDouble("h", 0.0)); }
+                catch (Exception ignored) { values[i] = 0.0; }
+                max = Math.max(max, values[i]);
+            }
+            if (max <= 0.0) max = 1.0;
+            Path path = new Path();
+            for (int i = 0; i < values.length; i++) {
+                float x = values.length == 1 ? (left + right) / 2f : left + (right - left) * i / (values.length - 1f);
+                float y = bottom - (float) (values[i] / (max * 1.15)) * (bottom - top);
+                if (i == 0) path.moveTo(x, y); else path.lineTo(x, y);
+            }
+            paint.setColor(GOLD);
+            paint.setStrokeWidth(2.2f * density);
+            paint.setStyle(Paint.Style.STROKE);
+            canvas.drawPath(path, paint);
+            paint.setStyle(Paint.Style.FILL);
             paint.setColor(MUTED);
-            paint.setTextSize(12 * density);
-            paint.setTextAlign(Paint.Align.CENTER);
-            canvas.drawText("Sem dados reais", (left + right) / 2f, (top + bottom) / 2f, paint);
             paint.setTextSize(9 * density);
-            canvas.drawText("O gráfico aparecerá após integrar o motor", (left + right) / 2f, (top + bottom) / 2f + 18 * density, paint);
+            paint.setTextAlign(Paint.Align.LEFT);
+            canvas.drawText("máx. observado: " + formatHashrate(max), left, getHeight() - 5 * density, paint);
+        }
+
+        private static String formatHashrate(double value) {
+            if (value >= 1_000_000_000_000.0) return String.format(Locale.US, "%.2f TH/s", value / 1_000_000_000_000.0);
+            if (value >= 1_000_000_000.0) return String.format(Locale.US, "%.2f GH/s", value / 1_000_000_000.0);
+            if (value >= 1_000_000.0) return String.format(Locale.US, "%.2f MH/s", value / 1_000_000.0);
+            if (value >= 1_000.0) return String.format(Locale.US, "%.2f kH/s", value / 1_000.0);
+            return String.format(Locale.US, "%.2f H/s", value);
         }
     }
+
 }
