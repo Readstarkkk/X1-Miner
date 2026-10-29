@@ -52,7 +52,8 @@ CC="$CC" AR="$AR" RANLIB="$RANLIB" CFLAGS="-O2 -fPIC" \
     --disable-shared --enable-static --without-ssl --without-zlib \
     --disable-ftp --disable-file --disable-ldap --disable-ldaps --disable-rtsp \
     --disable-dict --disable-telnet --disable-tftp --disable-pop3 --disable-imap \
-    --disable-smtp --disable-gopher --disable-mqtt --disable-manual
+    --disable-smtp --disable-gopher --disable-mqtt --disable-manual \
+    --without-libpsl --without-brotli --without-zstd
 make -j2
 make install
 
