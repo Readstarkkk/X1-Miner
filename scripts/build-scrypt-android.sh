@@ -82,5 +82,17 @@ mkdir -p "$ROOT/app/src/main/jniLibs/arm64-v8a"
 "$STRIP" --strip-unneeded ./cpuminer
 cp ./cpuminer "$ROOT/app/src/main/jniLibs/arm64-v8a/libcpuminer.so"
 chmod 755 "$ROOT/app/src/main/jniLibs/arm64-v8a/libcpuminer.so"
+# Package the Android NDK C++ runtime required by cpuminer.
+CXX_RUNTIME="$TOOLCHAIN/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
+
+if [[ ! -f "$CXX_RUNTIME" ]]; then
+  echo "Android NDK libc++_shared.so not found: $CXX_RUNTIME" >&2
+  exit 1
+fi
+
+cp "$CXX_RUNTIME" "$ROOT/app/src/main/jniLibs/arm64-v8a/libc++_shared.so"
+chmod 644 "$ROOT/app/src/main/jniLibs/arm64-v8a/libc++_shared.so"
+
+echo "Packaged Android C++ runtime for ARM64."
 file "$ROOT/app/src/main/jniLibs/arm64-v8a/libcpuminer.so"
 echo "Built experimental Android ARM64 Scrypt engine: app/src/main/jniLibs/arm64-v8a/libcpuminer.so"
