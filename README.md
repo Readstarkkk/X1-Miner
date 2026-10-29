@@ -1,27 +1,48 @@
-# X1 Monitor — Android thermal monitor
+# X1 Miner — Android project
 
-Esta versão é uma reconstrução simplificada do projeto original. Ela monitora a temperatura reportada pela bateria e, quando disponível, o estado térmico do Android. **Não inicia, configura nem controla mineradores ou outros processos.** Essa mudança é intencional: executar tarefas de CPU contínuas em um telefone pode gerar aquecimento e desgaste.
+Aplicativo Android nativo em Java, com tema preto/dourado/laranja e quatro abas:
 
-## Recursos
+1. **Minerar** — seleção de moeda, carteira, pool/porta, algoritmo esperado e leitura disponível de bateria/temperatura.
+2. **Gráfico** — estatísticas reais ficam sem dados até integrar um motor de mineração.
+3. **Configurações** — preferências persistidas localmente para threads, perfil, unidade/limite de hashrate e proteções.
+4. **Node** — telas de criação/entrada com validação básica de formulário; conexão remota ainda depende de backend.
 
-- Interface Android escura em roxo e laranja.
-- Leitura da temperatura da bateria quando o aparelho a disponibiliza.
-- Leitura do estado térmico Android em API 29 ou superior.
-- Monitoramento contínuo opcional em serviço foreground com notificação.
-- Avisos visuais a partir de 42 °C, alertas a partir de 45 °C e mensagens para estados térmicos severos.
-- Sem dependências externas de UI e sem acesso a Termux, rede, carteira ou pool.
+## Estado desta versão
 
-Os sensores variam por aparelho. A temperatura da bateria não representa a temperatura exata da CPU e pode não estar disponível. O aplicativo não substitui os mecanismos térmicos do Android.
+Esta é uma **base compilável da interface (0.1.0-preview)**, não um minerador operacional. Ela **não abre conexões de pool, não calcula hashrate real, não envia shares e não estima ganhos**. O botão de iniciar valida alguns requisitos e informa que o motor não está integrado. O formulário Node não cria uma Node remota.
 
-## Requisitos técnicos
+Para uma versão que minere de verdade, ainda é necessário integrar e testar motores compatíveis por algoritmo, protocolo de pool/Stratum, serviço em primeiro plano, tratamento de falhas, proteção térmica baseada em sensores apropriados e um backend Node com autenticação e comunicação criptografada. A interface não deve ser tratada como prova de rentabilidade ou de desempenho.
 
-- Android 8.0 (API 26) ou superior.
-- Java 17 para compilar.
-- Android SDK Platform 35 e Build Tools 35.0.0.
-- Android Gradle Plugin 8.7.3 com Gradle 8.9.
+## Compilar no GitHub usando o Termux para enviar o código
 
-## Compilar pelo GitHub Actions
+O workflow `.github/workflows/android-build.yml` compila o APK em um runner do GitHub quando você envia um commit ou inicia manualmente o workflow. Ele usa Java 17, Android SDK 35 e Gradle 8.13.
 
-O workflow fica em `.github/workflows/android.yml`. Envie o projeto para `main` ou `master`, ou abra a aba **Actions** e execute **Build X1 Monitor APK** manualmente. O workflow configura explicitamente `platform-tools`, evitando o pacote legado `tools` que causou a falha anterior. Depois de uma compilação bem-sucedida, o arquivo `X1-Monitor-debug-apk` estará na seção **Artifacts**.
+1. Baixe e extraia este projeto no celular.
+2. Dentro da pasta `x1miner_project`, configure o repositório remoto correto e envie os arquivos:
 
-O artefato é um APK de depuração. Ainda precisa ser instalado e testado no aparelho antes de ser considerado validado. Não há como garantir ausência absoluta de bugs sem testar o aplicativo no dispositivo alvo.
+```sh
+git init
+git branch -M main
+git add .
+git commit -m "Add X1 Miner Android project"
+git remote add origin https://github.com/SEU-USUARIO/SEU-REPOSITORIO.git
+git push -u origin main
+```
+
+Se você já tem um repositório com arquivos importantes, **não use `git init` nem substitua o projeto sem conferir primeiro**. Copie estes arquivos para uma branch separada ou faça backup antes.
+
+3. No GitHub, abra a aba **Actions**, selecione **Build X1 Miner Android APK** e abra a execução mais recente.
+4. Quando terminar com sucesso, baixe o artefato **X1-Miner-debug**. Dentro dele estará `app-debug.apk`.
+
+O build também inicia automaticamente em cada `push` e `pull_request`.
+
+## Compilação local
+
+O script `gradlew` incluído baixa a distribuição oficial Gradle 8.13 na primeira execução. A compilação local também exige um JDK compatível e Android SDK instalado. Para este fluxo, o recomendado é deixar o GitHub Actions compilar o APK.
+
+## Privacidade e segurança
+
+- As preferências e endereços de carteira inseridos na tela Minerar são armazenados localmente nas preferências privadas do aplicativo.
+- Não coloque senhas de carteiras em campos de Node.
+- O Node real não está ativo e nenhuma senha é enviada a um servidor nesta versão.
+- O teto de `1 TH/s` exibido na configuração é apenas um limite de interface, não uma capacidade prometida do aparelho.

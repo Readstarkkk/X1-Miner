@@ -1,0 +1,12 @@
+<resources>
+    <color name="x1_black">#050505</color>
+    <color name="x1_surface">#101010</color>
+    <color name="x1_surface2">#171717</color>
+    <color name="x1_border">#34302A</color>
+    <color name="x1_gold">#F4B64F</color>
+    <color name="x1_orange">#F29435</color>
+    <color name="x1_white">#F6F4EF</color>
+    <color name="x1_muted">#AAA49A</color>
+    <color name="x1_red">#F05B5B</color>
+    <color name="x1_green">#43C88A</color>
+</resources>
