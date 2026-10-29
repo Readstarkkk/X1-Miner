@@ -554,9 +554,10 @@ public class MainActivity extends Activity {
         logText.setTextIsSelectable(true);
         logText.setPadding(dp(8), dp(8), dp(8), dp(8));
         logScroll.addView(logText, new ScrollView.LayoutParams(-1, -2));
+        logScroll.setPadding(dp(12), dp(4), dp(12), dp(4));
         new AlertDialog.Builder(this)
                 .setTitle("Logs do motor X1")
-                .setView(logScroll, dp(12), dp(4), dp(12), dp(4))
+                .setView(logScroll)
                 .setPositiveButton("Copiar logs", (dialog, which) -> {
                     android.content.ClipboardManager clipboard =
                             (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
