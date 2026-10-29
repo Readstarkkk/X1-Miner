@@ -25,6 +25,8 @@ import java.io.InputStreamReader;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -44,6 +46,12 @@ public final class MiningService extends Service {
     private static final Pattern SHARE_PATTERN = Pattern.compile("accepted\\s+\\((\\d+)/(\\d+)\\)");
     private static final Pattern SPEED_PATTERN = Pattern.compile(
             "speed\\s+\\S+\\s+([0-9]+(?:\\.[0-9]+)?)\\s+([0-9]+(?:\\.[0-9]+)?)\\s+(?:[0-9]+(?:\\.[0-9]+)?|n/a)\\s+([kMGT]?H/s)");
+    private static final Pattern CPUMINER_THREAD_RATE_PATTERN = Pattern.compile(
+            "(?i)Thread\\s+(\\d+),\\s*CPU\\s+\\d+:\\s*([0-9]+(?:\\.[0-9]+)?)\\s*([kMGT]?)h/s");
+    private static final Pattern CPUMINER_HASH_RATE_PATTERN = Pattern.compile(
+            "(?i)Hash rate\\s+.*?\\(\\s*([0-9]+(?:\\.[0-9]+)?)\\s*([kMGT]?)h/s\\s*\\)");
+    private static final Pattern CPUMINER_ACCEPT_PATTERN = Pattern.compile("(?i)\\bAccepted\\s+(\\d+)\\b|\\bA(\\d+)\\b");
+    private static final Pattern CPUMINER_REJECT_PATTERN = Pattern.compile("(?i)\\bRejected\\s+(\\d+)\\b|\\bR(\\d+)\\b");
 
     private SharedPreferences prefs;
     private PowerManager.WakeLock wakeLock;
@@ -81,6 +89,10 @@ public final class MiningService extends Service {
     private volatile Process process;
     private volatile boolean running;
     private volatile boolean stopping;
+    private volatile int activeCoinIndex = 0;
+    private volatile int activeThreadCount = 1;
+    private volatile String activeCoinName = "Monero";
+    private final Map<Integer, Double> perThreadHashrates = new HashMap<>();
     private long sessionStartedAt;
     private long lastNotificationUpdate;
     private int acceptedShares;
@@ -121,10 +133,13 @@ public final class MiningService extends Service {
 
     private void startEngine(Intent intent, int startId) {
         try {
-            if (intent.getIntExtra(EXTRA_COIN_INDEX, 0) != 0) {
-                failStart(startId, "Este motor suporta apenas Monero (RandomX) nesta versão.");
+            int coinIndex = intent.getIntExtra(EXTRA_COIN_INDEX, 0);
+            if (coinIndex < 0 || coinIndex > 2) {
+                failStart(startId, "Bitcoin (SHA-256d) ainda não possui motor integrado. Esta versão suporta Monero, Dogecoin e Litecoin.");
                 return;
             }
+            activeCoinIndex = coinIndex;
+            activeCoinName = coinIndex == 0 ? "Monero" : (coinIndex == 1 ? "Dogecoin" : "Litecoin");
             String wallet = intent.getStringExtra(EXTRA_WALLET);
             String poolInput = intent.getStringExtra(EXTRA_POOL);
             if (wallet == null || wallet.trim().isEmpty()) {
@@ -134,6 +149,10 @@ public final class MiningService extends Service {
             PoolAddress pool = PoolAddress.parse(poolInput);
             if (pool == null) {
                 failStart(startId, "Pool inválida. Use host:porta, stratum+tcp://host:porta ou stratum+ssl://host:porta.");
+                return;
+            }
+            if (coinIndex != 0 && pool.tls) {
+                failStart(startId, "O motor Scrypt experimental desta versão aceita apenas Stratum TCP sem TLS. Use host:porta ou stratum+tcp://host:porta.");
                 return;
             }
 
@@ -147,21 +166,37 @@ public final class MiningService extends Service {
                 return;
             }
 
-            File executable = new File(getApplicationInfo().nativeLibraryDir, "libxmrig.so");
-            if (!executable.isFile() || !executable.canExecute()) {
-                failStart(startId, "Motor ARM64 ausente. Execute o workflow de build atualizado no GitHub Actions.");
-                return;
-            }
-
             int threads = chooseThreads();
-            File config = writeConfig(pool, wallet.trim(), threads);
-            acquireWakeLock();
-            ProcessBuilder builder = new ProcessBuilder(
-                    executable.getAbsolutePath(), "-c", config.getAbsolutePath(),
-                    "-t", Integer.toString(threads), "--randomx-mode=light", "--no-color", "--print-time=5");
+            File executable;
+            ProcessBuilder builder;
+            if (coinIndex == 0) {
+                executable = new File(getApplicationInfo().nativeLibraryDir, "libxmrig.so");
+                if (!executable.isFile() || !executable.canExecute()) {
+                    failStart(startId, "Motor ARM64 XMRig ausente. Confira o workflow de build do GitHub Actions.");
+                    return;
+                }
+                File config = writeConfig(pool, wallet.trim(), threads);
+                builder = new ProcessBuilder(
+                        executable.getAbsolutePath(), "-c", config.getAbsolutePath(),
+                        "-t", Integer.toString(threads), "--randomx-mode=light", "--no-color", "--print-time=5");
+            } else {
+                executable = new File(getApplicationInfo().nativeLibraryDir, "libcpuminer.so");
+                if (!executable.isFile() || !executable.canExecute()) {
+                    failStart(startId, "Motor Scrypt ARM64 ausente. O build experimental cpuminer-opt não foi empacotado.");
+                    return;
+                }
+                String poolUrl = "stratum+tcp://" + pool.host + ":" + pool.port;
+                builder = new ProcessBuilder(executable.getAbsolutePath(), "-a", "scrypt", "-o", poolUrl,
+                        "-u", wallet.trim(), "-p", "x", "-t", Integer.toString(threads), "--hash-meter");
+            }
             builder.redirectErrorStream(true);
+            acquireWakeLock();
             process = builder.start();
-            appendEngineLog("Processo nativo iniciado; threads configuradas: " + threads + ".");
+            synchronized (this) { perThreadHashrates.clear(); }
+            activeThreadCount = threads;
+            prefs.edit().putInt("miner_active_coin_index", coinIndex).apply();
+            appendEngineLog("Motor " + activeCoinName + " / " + (coinIndex == 0 ? "RandomX" : "Scrypt")
+                    + " iniciado; threads configuradas: " + threads + ".");
             running = true;
             stopping = false;
             safetyHandler.removeCallbacks(safetyMonitor);
@@ -173,8 +208,8 @@ public final class MiningService extends Service {
             hashrate = "0 H/s";
             prefs.edit().putString("miner_samples", "[]").apply();
             saveStats();
-            storeState("connecting", "Conectando à pool Monero…");
-            updateNotification("Conectando à pool Monero…");
+            storeState("connecting", "Conectando à pool " + activeCoinName + "…");
+            updateNotification("Conectando à pool " + activeCoinName + "…");
             broadcastStats();
 
             final Process started = process;
@@ -270,35 +305,99 @@ public final class MiningService extends Service {
         String clean = line == null ? "" : line.replaceAll("\\u001B\\[[;\\d]*m", "");
         appendEngineLog(clean);
         String lower = clean.toLowerCase(Locale.ROOT);
-        if (lower.contains("use pool") || lower.contains("new job")) {
-            storeState("running", "Motor ativo; recebeu trabalho da pool.");
-        } else if (lower.contains("connection refused") || lower.contains("no active pools") || lower.contains("failed to connect")) {
+        if (lower.contains("connection refused") || lower.contains("no active pools")
+                || lower.contains("failed to connect") || lower.contains("connection error")) {
             storeState("connecting", "Pool indisponível; o motor tentará reconectar.");
+        } else if (activeCoinIndex == 0 && (lower.contains("use pool") || lower.contains("new job"))) {
+            storeState("running", "Motor RandomX ativo; recebeu trabalho da pool.");
+        } else if (activeCoinIndex != 0 && (lower.contains("stratum connection established")
+                || lower.contains("new block") || lower.contains("stratum difficulty")
+                || lower.contains("accepted "))) {
+            storeState("running", "Motor Scrypt ativo; recebeu/validou trabalho da pool.");
         }
-        Matcher share = SHARE_PATTERN.matcher(clean);
-        if (share.find()) {
-            try {
-                acceptedShares = Integer.parseInt(share.group(1));
-                rejectedShares = Integer.parseInt(share.group(2));
-            } catch (NumberFormatException ignored) { }
-            saveStats();
-        }
-        Matcher speed = SPEED_PATTERN.matcher(clean);
-        if (speed.find()) {
-            try {
-                hashrateValue = Double.parseDouble(speed.group(1)) * unitMultiplier(speed.group(3));
-                hashrate = formatHashrate(hashrateValue);
-                appendHashrateSample(hashrateValue);
+
+        if (activeCoinIndex == 0) {
+            Matcher share = SHARE_PATTERN.matcher(clean);
+            if (share.find()) {
+                try {
+                    acceptedShares = Integer.parseInt(share.group(1));
+                    rejectedShares = Integer.parseInt(share.group(2));
+                } catch (NumberFormatException ignored) { }
                 saveStats();
-            } catch (NumberFormatException ignored) {
-                appendEngineLog("Não foi possível interpretar a taxa de hash: " + clean);
+            }
+            Matcher speed = SPEED_PATTERN.matcher(clean);
+            if (speed.find()) {
+                try {
+                    hashrateValue = Double.parseDouble(speed.group(1)) * unitMultiplier(speed.group(3));
+                    hashrate = formatHashrate(hashrateValue);
+                    appendHashrateSample(hashrateValue);
+                    saveStats();
+                } catch (NumberFormatException ignored) {
+                    appendEngineLog("Não foi possível interpretar a taxa de hash: " + clean);
+                }
+            }
+        } else {
+            Matcher accepted = CPUMINER_ACCEPT_PATTERN.matcher(clean);
+            if (accepted.find()) {
+                try {
+                    String count = accepted.group(1) != null ? accepted.group(1) : accepted.group(2);
+                    acceptedShares = Integer.parseInt(count);
+                    storeState("running", "Motor Scrypt ativo; a pool reportou shares aceitas.");
+                    saveStats();
+                } catch (NumberFormatException ignored) { }
+            }
+            Matcher rejected = CPUMINER_REJECT_PATTERN.matcher(clean);
+            if (rejected.find()) {
+                try {
+                    String count = rejected.group(1) != null ? rejected.group(1) : rejected.group(2);
+                    rejectedShares = Integer.parseInt(count);
+                    saveStats();
+                } catch (NumberFormatException ignored) { }
+            }
+
+            Matcher threadRate = CPUMINER_THREAD_RATE_PATTERN.matcher(clean);
+            if (threadRate.find()) {
+                try {
+                    int threadId = Integer.parseInt(threadRate.group(1));
+                    double rate = Double.parseDouble(threadRate.group(2)) * prefixMultiplier(threadRate.group(3));
+                    perThreadHashrates.put(threadId, rate);
+                    double total = 0.0;
+                    for (double threadValue : perThreadHashrates.values()) total += threadValue;
+                    if (total >= 0.0 && !perThreadHashrates.isEmpty()) {
+                        hashrateValue = total;
+                        hashrate = formatHashrate(total);
+                        if (perThreadHashrates.size() >= activeThreadCount) appendHashrateSample(total);
+                        saveStats();
+                    }
+                } catch (NumberFormatException ignored) { }
+            }
+            Matcher totalRate = CPUMINER_HASH_RATE_PATTERN.matcher(clean);
+            if (totalRate.find()) {
+                try {
+                    hashrateValue = Double.parseDouble(totalRate.group(1)) * prefixMultiplier(totalRate.group(2));
+                    hashrate = formatHashrate(hashrateValue);
+                    appendHashrateSample(hashrateValue);
+                    saveStats();
+                } catch (NumberFormatException ignored) { }
             }
         }
+
         long now = System.currentTimeMillis();
         if (now - lastNotificationUpdate >= 5000L) {
             lastNotificationUpdate = now;
             updateNotification(hashrate + " · " + acceptedShares + " aceitas");
             broadcastStats();
+        }
+    }
+
+    private double prefixMultiplier(String prefix) {
+        if (prefix == null || prefix.isEmpty()) return 1.0;
+        switch (prefix.toLowerCase(Locale.ROOT)) {
+            case "k": return 1_000.0;
+            case "m": return 1_000_000.0;
+            case "g": return 1_000_000_000.0;
+            case "t": return 1_000_000_000_000.0;
+            default: return 1.0;
         }
     }
 
@@ -368,6 +467,7 @@ public final class MiningService extends Service {
     private void saveStats() {
         prefs.edit().putString("miner_hashrate", hashrate)
                 .putString("miner_hashrate_hps", Double.toString(hashrateValue))
+                .putInt("miner_active_coin_index", activeCoinIndex)
                 .putInt("miner_accepted", acceptedShares)
                 .putInt("miner_rejected", rejectedShares)
                 .putLong("miner_started_ms", sessionStartedAt).apply();
@@ -391,7 +491,7 @@ public final class MiningService extends Service {
     }
 
     private Notification buildNotification(String message) {
-        return new Notification.Builder(this, CHANNEL_ID).setContentTitle("X1 Miner · Monero")
+        return new Notification.Builder(this, CHANNEL_ID).setContentTitle("X1 Miner · " + activeCoinName)
                 .setContentText(message).setSmallIcon(android.R.drawable.stat_sys_download)
                 .setOngoing(true).setOnlyAlertOnce(true).build();
     }

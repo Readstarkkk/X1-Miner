@@ -224,6 +224,7 @@ public class MainActivity extends Activity {
         sectionHeading(content, "Painel de mineração", "Acompanhe o motor, a moeda e as proteções do dispositivo.");
 
         LinearLayout status = card(content);
+        int displayedCoinIndex = Math.max(0, Math.min(prefs.getInt("selected_coin", 0), coins.length - 1));
         String engineState = prefs.getString("miner_state", "stopped");
         String stateLabel = "running".equals(engineState) ? "MINERANDO"
                 : "connecting".equals(engineState) ? "CONECTANDO"
@@ -232,7 +233,9 @@ public class MainActivity extends Activity {
                 : "error".equals(engineState) ? RED
                 : "connecting".equals(engineState) ? GOLD : MUTED;
         rowTitle(status, "STATUS DO MOTOR", stateLabel, stateColor);
-        TextView engine = text("Motor nativo · Monero / RandomX", 16, WHITE, true);
+        String engineLabel = displayedCoinIndex == 0 ? "Motor nativo · Monero / RandomX"
+                : displayedCoinIndex == 3 ? "Motor ainda não integrado · SHA-256d" : "Motor nativo · Scrypt";
+        TextView engine = text(engineLabel, 16, WHITE, true);
         LinearLayout.LayoutParams engineLp = new LinearLayout.LayoutParams(-1, -2);
         engineLp.topMargin = dp(6);
         status.addView(engine, engineLp);
@@ -314,8 +317,8 @@ public class MainActivity extends Activity {
 
         Button start = primaryButton("▶  Iniciar mineração");
         start.setOnClickListener(v -> {
-            if (coinSpinner.getSelectedItemPosition() != 0) {
-                toast("O motor nativo disponível nesta versão é somente para Monero (RandomX).");
+            if (coinSpinner.getSelectedItemPosition() == 3) {
+                toast("Bitcoin (SHA-256d) ainda não possui motor integrado nesta versão.");
                 return;
             }
             BatteryInfo current = getBatteryInfo();
@@ -359,7 +362,7 @@ public class MainActivity extends Activity {
             };
             if (prefs.getBoolean("confirm_start", true)) {
                 new AlertDialog.Builder(MainActivity.this)
-                        .setTitle("Iniciar mineração Monero?")
+                        .setTitle("Iniciar " + coinSpinner.getSelectedItem().toString() + "?")
                         .setMessage("A mineração mantém a CPU ocupada e pode aquecer o aparelho. O motor começa limitado a uma fração dos núcleos.")
                         .setNegativeButton("Cancelar", (dialog, which) -> { })
                         .setPositiveButton("Iniciar", (dialog, which) -> launchMiner.run())
@@ -412,7 +415,10 @@ public class MainActivity extends Activity {
             line.setOrientation(LinearLayout.HORIZONTAL);
             TextView c = text(coins[i], 13, WHITE, true);
             line.addView(c, new LinearLayout.LayoutParams(0, dp(40), 1));
-            String coinShares = i == 0 ? prefs.getInt("miner_accepted", 0) + " shares aceitas" : "motor não instalado";
+            int activeCoin = prefs.getInt("miner_active_coin_index", -1);
+            String coinShares = i == activeCoin
+                    ? prefs.getInt("miner_accepted", 0) + " shares aceitas"
+                    : i == 3 ? "motor não instalado" : "sem sessão nesta moeda";
             line.addView(text(coinShares, 11, MUTED, false));
             perCoin.addView(line);
             if (i < coins.length - 1) divider(perCoin);
