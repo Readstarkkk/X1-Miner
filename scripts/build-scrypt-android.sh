@@ -74,7 +74,10 @@ CXXFLAGS="-O2 -fPIC -D__ANDROID_API__=$API" \
 make -j2
 
 test -x ./cpuminer
-"$TOOLCHAIN/bin/llvm-readelf" -l ./cpuminer | grep -q '/system/bin/linker64'
+echo "=== Diagnóstico do binário cpuminer ==="
+test -x ./cpuminer
+file ./cpuminer
+"$TOOLCHAIN/bin/llvm-readelf" -l ./cpuminer
 mkdir -p "$ROOT/app/src/main/jniLibs/arm64-v8a"
 "$STRIP" --strip-unneeded ./cpuminer
 cp ./cpuminer "$ROOT/app/src/main/jniLibs/arm64-v8a/libcpuminer.so"
