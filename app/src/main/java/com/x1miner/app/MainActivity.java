@@ -1,10 +1,15 @@
 package com.x1miner.app;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.drawable.BitmapDrawable;
+import android.net.Uri;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Typeface;
@@ -12,6 +17,8 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.Editable;
 import android.text.InputFilter;
 import android.text.InputType;
@@ -52,6 +59,8 @@ public class MainActivity extends Activity {
     private static final int MUTED = 0xFFAAA49A;
     private static final int RED = 0xFFF05B5B;
     private static final int GREEN = 0xFF43C88A;
+    private static final int REQUEST_BACKGROUND_IMAGE = 701;
+    private static final String PREF_BACKGROUND_URI = "custom_background_uri";
 
     private final String[] tabNames = {"Minerar", "Gráfico", "Configurações", "Node"};
     private final String[] tabGlyphs = {"⛏", "▥", "⚙", "⌘"};
@@ -75,8 +84,32 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             getWindow().getDecorView().setSystemUiVisibility(0);
         }
-        buildShell();
-        showTab(prefs.getInt("last_tab", 0));
+        showSplashScreen();
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            buildShell();
+            applySavedBackground();
+            showTab(prefs.getInt("last_tab", 0));
+        }, 850L);
+    }
+
+    /** Simple splash: existing X1 Miner cover on black, without extra artwork. */
+    private void showSplashScreen() {
+        FrameLayout splash = new FrameLayout(this);
+        splash.setBackgroundColor(BLACK);
+        LinearLayout center = new LinearLayout(this);
+        center.setGravity(Gravity.CENTER);
+        center.setOrientation(LinearLayout.VERTICAL);
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.x1_logo);
+        logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        center.addView(logo, new LinearLayout.LayoutParams(dp(216), dp(216)));
+        TextView status = text("Iniciando X1 Miner...", 13, GOLD, false);
+        status.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams statusLp = new LinearLayout.LayoutParams(-1, -2);
+        statusLp.topMargin = dp(16);
+        center.addView(status, statusLp);
+        splash.addView(center, new FrameLayout.LayoutParams(-1, -1));
+        setContentView(splash);
     }
 
     private void buildShell() {
@@ -387,7 +420,122 @@ public class MainActivity extends Activity {
         addPreference(notifications, "Alertas de temperatura", "notify_temp", true);
         addPreference(notifications, "Alertas de bateria", "notify_battery", true);
         addPreference(notifications, "Alertas de desconexão", "notify_disconnect", true);
+
+        LinearLayout appearance = card(content);
+        cardHeading(appearance, "Aparência", "Escolha uma imagem da galeria para usar como background.");
+        Button chooseBackground = secondaryButton("Escolher imagem da galeria");
+        appearance.addView(chooseBackground, new LinearLayout.LayoutParams(-1, dp(46)));
+        chooseBackground.setOnClickListener(v -> openBackgroundPicker());
+        Button resetBackground = secondaryButton("Voltar ao background preto");
+        LinearLayout.LayoutParams resetLp = new LinearLayout.LayoutParams(-1, dp(46));
+        resetLp.topMargin = dp(8);
+        appearance.addView(resetBackground, resetLp);
+        resetBackground.setOnClickListener(v -> {
+            prefs.edit().remove(PREF_BACKGROUND_URI).apply();
+            root.setBackgroundColor(BLACK);
+            toast("Background padrão restaurado.");
+        });
+        note(appearance, "A imagem é salva neste dispositivo. Os cartões mantêm o fundo escuro para preservar a leitura.");
+
         note(content, "A leitura térmica depende dos sensores disponíveis no aparelho. A proteção de 44 °C precisa ser validada com o sensor escolhido na integração do motor.");
+    }
+
+    private void openBackgroundPicker() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("image/*");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        try {
+            startActivityForResult(intent, REQUEST_BACKGROUND_IMAGE);
+        } catch (Exception e) {
+            toast("Não foi possível abrir o seletor de imagens.");
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_BACKGROUND_IMAGE || resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        Uri uri = data.getData();
+        Bitmap previewBitmap = decodeBackgroundBitmap(uri);
+        if (previewBitmap == null) {
+            toast("Não foi possível ler essa imagem. Escolha outra.");
+            return;
+        }
+        ImageView preview = new ImageView(this);
+        preview.setImageBitmap(previewBitmap);
+        preview.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        preview.setBackgroundColor(BLACK);
+        FrameLayout previewFrame = new FrameLayout(this);
+        previewFrame.setPadding(dp(8), dp(8), dp(8), dp(8));
+        previewFrame.addView(preview, new FrameLayout.LayoutParams(-1, dp(260)));
+        new AlertDialog.Builder(this)
+                .setTitle("Prévia do background")
+                .setView(previewFrame)
+                .setNegativeButton("Cancelar", (dialog, which) -> { })
+                .setPositiveButton("Aplicar", (dialog, which) -> {
+                    try {
+                        getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    } catch (Exception ignored) {
+                        // Providers that do not support persistable grants are handled by the fallback below.
+                    }
+                    prefs.edit().putString(PREF_BACKGROUND_URI, uri.toString()).apply();
+                    if (applyBackground(uri)) toast("Background aplicado e salvo.");
+                    else {
+                        prefs.edit().remove(PREF_BACKGROUND_URI).apply();
+                        toast("Não foi possível aplicar essa imagem.");
+                    }
+                })
+                .show();
+    }
+
+    private void applySavedBackground() {
+        String saved = prefs.getString(PREF_BACKGROUND_URI, null);
+        if (saved == null || saved.trim().isEmpty()) {
+            root.setBackgroundColor(BLACK);
+            return;
+        }
+        try {
+            if (!applyBackground(Uri.parse(saved))) {
+                prefs.edit().remove(PREF_BACKGROUND_URI).apply();
+                root.setBackgroundColor(BLACK);
+            }
+        } catch (Exception e) {
+            prefs.edit().remove(PREF_BACKGROUND_URI).apply();
+            root.setBackgroundColor(BLACK);
+        }
+    }
+
+    private boolean applyBackground(Uri uri) {
+        Bitmap bitmap = decodeBackgroundBitmap(uri);
+        if (bitmap == null) return false;
+        BitmapDrawable background = new BitmapDrawable(getResources(), bitmap);
+        background.setAlpha(145);
+        root.setBackground(background);
+        return true;
+    }
+
+    /** Decode a downsampled image so large gallery photos are less likely to exhaust memory. */
+    private Bitmap decodeBackgroundBitmap(Uri uri) {
+        try {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            try (java.io.InputStream stream = getContentResolver().openInputStream(uri)) {
+                if (stream == null) return null;
+                BitmapFactory.decodeStream(stream, null, bounds);
+            }
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+            int sample = 1;
+            while (bounds.outWidth / sample > 2048 || bounds.outHeight / sample > 2048) sample *= 2;
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inSampleSize = sample;
+            options.inPreferredConfig = Bitmap.Config.RGB_565;
+            try (java.io.InputStream stream = getContentResolver().openInputStream(uri)) {
+                return stream == null ? null : BitmapFactory.decodeStream(stream, null, options);
+            }
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private void renderNode(LinearLayout content) {
