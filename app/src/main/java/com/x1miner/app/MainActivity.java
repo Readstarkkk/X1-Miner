@@ -417,6 +417,21 @@ public class MainActivity extends Activity {
             perCoin.addView(line);
             if (i < coins.length - 1) divider(perCoin);
         }
+        LinearLayout logsCard = card(content);
+        cardHeading(logsCard, "Logs do motor", "Saída real do processo nativo; útil para diagnosticar pool, conexão e shares.");
+        TextView logsPreview = text(getEngineLogsPreview(), 10, MUTED, false);
+        logsPreview.setTypeface(Typeface.MONOSPACE);
+        logsPreview.setMaxLines(8);
+        logsPreview.setTextIsSelectable(true);
+        logsPreview.setPadding(dp(8), dp(8), dp(8), dp(8));
+        logsPreview.setBackground(roundRect(SURFACE2, BORDER, 1, 8));
+        logsCard.addView(logsPreview, new LinearLayout.LayoutParams(-1, -2));
+        Button openLogs = secondaryButton("Ver logs completos / copiar");
+        LinearLayout.LayoutParams openLogsLp = new LinearLayout.LayoutParams(-1, dp(44));
+        openLogsLp.topMargin = dp(8);
+        logsCard.addView(openLogs, openLogsLp);
+        openLogs.setOnClickListener(v -> showEngineLogs());
+
         note(content, "Ganhos e pagamentos só poderão ser exibidos quando forem recebidos da pool. Nenhum valor financeiro é estimado nesta prévia.");
     }
 
@@ -509,6 +524,51 @@ public class MainActivity extends Activity {
         note(appearance, "A imagem é salva neste dispositivo. Os cartões mantêm o fundo escuro para preservar a leitura.");
 
         note(content, "A leitura térmica depende dos sensores disponíveis no aparelho. A proteção de 44 °C precisa ser validada com o sensor escolhido na integração do motor.");
+    }
+
+    private String getEngineLogs() {
+        String logs = prefs.getString("miner_engine_logs", "");
+        return logs == null || logs.trim().isEmpty()
+                ? "Nenhum log recebido do motor nesta sessão. Inicie o motor ou confira se o processo nativo está empacotado."
+                : logs;
+    }
+
+    private String getEngineLogsPreview() {
+        String logs = getEngineLogs();
+        String[] lines = logs.split("\n");
+        StringBuilder preview = new StringBuilder();
+        int start = Math.max(0, lines.length - 8);
+        for (int i = start; i < lines.length; i++) {
+            if (preview.length() > 0) preview.append('\n');
+            preview.append(lines[i]);
+        }
+        return preview.toString();
+    }
+
+    private void showEngineLogs() {
+        final String logs = getEngineLogs();
+        ScrollView logScroll = new ScrollView(this);
+        logScroll.setFillViewport(false);
+        TextView logText = text(logs, 11, WHITE, false);
+        logText.setTypeface(Typeface.MONOSPACE);
+        logText.setTextIsSelectable(true);
+        logText.setPadding(dp(8), dp(8), dp(8), dp(8));
+        logScroll.addView(logText, new ScrollView.LayoutParams(-1, -2));
+        new AlertDialog.Builder(this)
+                .setTitle("Logs do motor X1")
+                .setView(logScroll, dp(12), dp(4), dp(12), dp(4))
+                .setPositiveButton("Copiar logs", (dialog, which) -> {
+                    android.content.ClipboardManager clipboard =
+                            (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                    if (clipboard != null) {
+                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("X1 Miner logs", logs));
+                        toast("Logs copiados. Você pode colá-los aqui para análise.");
+                    } else {
+                        toast("Não foi possível acessar a área de transferência.");
+                    }
+                })
+                .setNegativeButton("Fechar", null)
+                .show();
     }
 
     private void openBackgroundPicker() {

@@ -112,6 +112,8 @@ public final class MiningService extends Service {
         }
         startAsForeground("Preparando motor nativo…");
         stopEngine(false, "Reiniciando sessão");
+        prefs.edit().putString("miner_engine_logs", "").apply();
+        appendEngineLog("Solicitação de início recebida.");
         stopping = false;
         startEngine(intent, startId);
         return START_NOT_STICKY;
@@ -159,6 +161,7 @@ public final class MiningService extends Service {
                     "-t", Integer.toString(threads), "--randomx-mode=light", "--no-color", "--print-time=5");
             builder.redirectErrorStream(true);
             process = builder.start();
+            appendEngineLog("Processo nativo iniciado; threads configuradas: " + threads + ".");
             running = true;
             stopping = false;
             safetyHandler.removeCallbacks(safetyMonitor);
@@ -265,6 +268,7 @@ public final class MiningService extends Service {
 
     private synchronized void parseOutputLine(String line) {
         String clean = line == null ? "" : line.replaceAll("\\u001B\\[[;\\d]*m", "");
+        appendEngineLog(clean);
         String lower = clean.toLowerCase(Locale.ROOT);
         if (lower.contains("use pool") || lower.contains("new job")) {
             storeState("running", "Motor ativo; recebeu trabalho da pool.");
@@ -281,12 +285,14 @@ public final class MiningService extends Service {
         }
         Matcher speed = SPEED_PATTERN.matcher(clean);
         if (speed.find()) {
-            hashrate = speed.group(1) + " " + speed.group(3);
             try {
                 hashrateValue = Double.parseDouble(speed.group(1)) * unitMultiplier(speed.group(3));
+                hashrate = formatHashrate(hashrateValue);
                 appendHashrateSample(hashrateValue);
-            } catch (NumberFormatException ignored) { }
-            saveStats();
+                saveStats();
+            } catch (NumberFormatException ignored) {
+                appendEngineLog("Não foi possível interpretar a taxa de hash: " + clean);
+            }
         }
         long now = System.currentTimeMillis();
         if (now - lastNotificationUpdate >= 5000L) {
@@ -304,6 +310,52 @@ public final class MiningService extends Service {
         return 1.0;
     }
 
+    /** Format the actual rate in H/s, kH/s, MH/s, GH/s or TH/s based on magnitude. */
+    private String formatHashrate(double value) {
+        if (!Double.isFinite(value) || value < 0.0) value = 0.0;
+        String unit = "H/s";
+        double scaled = value;
+        if (value >= 1_000_000_000_000.0) {
+            unit = "TH/s"; scaled = value / 1_000_000_000_000.0;
+        } else if (value >= 1_000_000_000.0) {
+            unit = "GH/s"; scaled = value / 1_000_000_000.0;
+        } else if (value >= 1_000_000.0) {
+            unit = "MH/s"; scaled = value / 1_000_000.0;
+        } else if (value >= 1_000.0) {
+            unit = "kH/s"; scaled = value / 1_000.0;
+        }
+        String number = String.format(Locale.US, "%.2f", scaled);
+        while (number.contains(".") && number.endsWith("0")) number = number.substring(0, number.length() - 1);
+        if (number.endsWith(".")) number = number.substring(0, number.length() - 1);
+        return number + " " + unit;
+    }
+
+    /** Keep a bounded, timestamped tail of the real stdout/stderr lines from XMRig. */
+    private synchronized void appendEngineLog(String message) {
+        if (prefs == null) return;
+        String line = message == null ? "" : message.replace("\r", "").trim();
+        if (line.isEmpty()) return;
+        if (line.length() > 1200) line = line.substring(0, 1200) + " … [linha truncada]";
+        String timestamp = new java.text.SimpleDateFormat("HH:mm:ss", Locale.US)
+                .format(new java.util.Date());
+        String old = prefs.getString("miner_engine_logs", "");
+        String[] rows = old == null || old.isEmpty() ? new String[0] : old.split("\n");
+        StringBuilder out = new StringBuilder();
+        int first = Math.max(0, rows.length - 199);
+        for (int i = first; i < rows.length; i++) {
+            if (out.length() > 0) out.append('\n');
+            out.append(rows[i]);
+        }
+        if (out.length() > 0) out.append('\n');
+        out.append(timestamp).append(" ").append(line);
+        while (out.length() > 48_000) {
+            int nextLine = out.indexOf("\n");
+            if (nextLine < 0) { out.delete(0, out.length() - 48_000); break; }
+            out.delete(0, nextLine + 1);
+        }
+        prefs.edit().putString("miner_engine_logs", out.toString()).apply();
+    }
+
     private synchronized void appendHashrateSample(double value) {
         try {
             JSONArray samples = new JSONArray(prefs.getString("miner_samples", "[]"));
@@ -315,6 +367,7 @@ public final class MiningService extends Service {
 
     private void saveStats() {
         prefs.edit().putString("miner_hashrate", hashrate)
+                .putString("miner_hashrate_hps", Double.toString(hashrateValue))
                 .putInt("miner_accepted", acceptedShares)
                 .putInt("miner_rejected", rejectedShares)
                 .putLong("miner_started_ms", sessionStartedAt).apply();
@@ -379,6 +432,7 @@ public final class MiningService extends Service {
         }
         releaseWakeLock();
         if (byUser) {
+            appendEngineLog(reason);
             storeState("stopped", reason);
             prefs.edit().putLong("miner_started_ms", 0L).apply();
             updateNotification(reason);
@@ -387,6 +441,7 @@ public final class MiningService extends Service {
     }
 
     private void failStart(int startId, String message) {
+        appendEngineLog("ERRO: " + message);
         safetyHandler.removeCallbacks(safetyMonitor);
         running = false;
         stopping = true;
