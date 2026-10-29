@@ -31,7 +31,7 @@ mkdir -p "$BUILD" "$PREFIX"
 # Build GMP statically for the Android ABI, so the app does not need a system GMP library.
 cd "$BUILD"
 curl --fail --location --retry 3 --retry-all-errors \
-  "https://gmplib.org/download/gmp/gmp-6.3.0.tar.xz" -o gmp-6.3.0.tar.xz
+  "https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz" -o gmp-6.3.0.tar.xz
 tar -xf gmp-6.3.0.tar.xz
 cd "$BUILD/gmp-6.3.0"
 CC="$CC" AR="$AR" RANLIB="$RANLIB" CFLAGS="-O2 -fPIC" \
