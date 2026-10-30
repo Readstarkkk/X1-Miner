@@ -68,9 +68,9 @@ public class MainActivity extends Activity {
 
     private final String[] tabNames = {"Minerar", "Gráfico", "Configurações", "Node"};
     private final String[] tabGlyphs = {"⛏", "▥", "⚙", "⌘"};
-    private final String[] coins = {"Monero (XMR)", "Dogecoin (DOGE)", "Litecoin (LTC)", "Bitcoin (BTC)"};
-    private final String[] coinKeys = {"xmr", "doge", "ltc", "btc"};
-    private final String[] algorithms = {"RandomX", "Scrypt", "Scrypt", "SHA-256d"};
+    private final String[] coins = {"Monero (XMR)", "Dogecoin (DOGE)", "Litecoin (LTC)"};
+    private final String[] coinKeys = {"xmr", "doge", "ltc"};
+    private final String[] algorithms = {"RandomX", "Scrypt", "Scrypt"};
     private final String[] units = {"H/s", "kH/s", "MH/s", "GH/s", "TH/s"};
 
     private SharedPreferences prefs;
@@ -226,33 +226,28 @@ public class MainActivity extends Activity {
         LinearLayout status = card(content);
         int displayedCoinIndex = Math.max(0, Math.min(prefs.getInt("selected_coin", 0), coins.length - 1));
         String engineState = prefs.getString("miner_state", "stopped");
-        String stateLabel = displayedCoinIndex == 3 ? "LABORATÓRIO"
-                : "running".equals(engineState) ? "MINERANDO"
+        String stateLabel = "running".equals(engineState) ? "MINERANDO"
                 : "connecting".equals(engineState) ? "CONECTANDO"
                 : "error".equals(engineState) ? "ERRO" : "PARADO";
-        int stateColor = displayedCoinIndex == 3 ? GOLD
-                : "running".equals(engineState) ? GREEN
+        int stateColor = "running".equals(engineState) ? GREEN
                 : "error".equals(engineState) ? RED
                 : "connecting".equals(engineState) ? GOLD : MUTED;
         rowTitle(status, "STATUS DO MOTOR", stateLabel, stateColor);
-        String engineLabel = displayedCoinIndex == 0 ? "Motor nativo · Monero / RandomX"
-                : displayedCoinIndex == 3 ? "Validação offline · Bitcoin / SHA-256d" : "Motor nativo · Scrypt";
+        String engineLabel = displayedCoinIndex == 0 ? "Motor nativo · Monero / RandomX" : "Motor nativo · Scrypt";
         TextView engine = text(engineLabel, 16, WHITE, true);
         LinearLayout.LayoutParams engineLp = new LinearLayout.LayoutParams(-1, -2);
         engineLp.topMargin = dp(6);
         status.addView(engine, engineLp);
-        status.addView(text(displayedCoinIndex == 3
-                ? "Bitcoin selecionado: teste didático offline; sem mineração ou pool."
-                : prefs.getString("miner_status", "Sessão parada"), 12, MUTED, false));
+        status.addView(text(prefs.getString("miner_status", "Sessão parada"), 12, MUTED, false));
         divider(status);
         LinearLayout stats = new LinearLayout(this);
         stats.setOrientation(LinearLayout.HORIZONTAL);
-        String currentHashrate = displayedCoinIndex == 3 ? "N/D" : prefs.getString("miner_hashrate", "0 H/s");
-        int currentAccepted = displayedCoinIndex == 3 ? 0 : prefs.getInt("miner_accepted", 0);
-        int currentRejected = displayedCoinIndex == 3 ? 0 : prefs.getInt("miner_rejected", 0);
-        long currentStarted = displayedCoinIndex == 3 ? 0L : prefs.getLong("miner_started_ms", 0L);
+        String currentHashrate = prefs.getString("miner_hashrate", "0 H/s");
+        int currentAccepted = prefs.getInt("miner_accepted", 0);
+        int currentRejected = prefs.getInt("miner_rejected", 0);
+        long currentStarted = prefs.getLong("miner_started_ms", 0L);
         stats.addView(metric("HASHRATE", currentHashrate,
-                displayedCoinIndex == 3 ? "sem motor BTC" : "taxa informada pelo motor", true), new LinearLayout.LayoutParams(0, -2, 1));
+                "taxa informada pelo motor", true), new LinearLayout.LayoutParams(0, -2, 1));
         stats.addView(metric("SHARES ACEITAS", String.valueOf(currentAccepted), currentRejected + " rejeitadas", false), new LinearLayout.LayoutParams(0, -2, 1));
         stats.addView(metric("TEMPO", formatElapsed(currentStarted), currentStarted > 0 ? "sessão atual" : "sem sessão ativa", false), new LinearLayout.LayoutParams(0, -2, 1));
         status.addView(stats);
@@ -279,43 +274,21 @@ public class MainActivity extends Activity {
         valueLp.bottomMargin = dp(10);
         config.addView(algorithmValue, valueLp);
 
-        if (selectedCoin == 3) {
-            note(config, "Modo educativo: calcula uma única vez o SHA-256d de um cabeçalho conhecido. Não minera BTC, não procura nonces e não conecta a pools.");
-            Button bitcoinTest = secondaryButton("✓  Validar bloco gênese do Bitcoin");
-            LinearLayout.LayoutParams bitcoinTestLp = new LinearLayout.LayoutParams(-1, dp(46));
-            bitcoinTestLp.topMargin = dp(5);
-            config.addView(bitcoinTest, bitcoinTestLp);
-            TextView bitcoinResult = text("Aguardando validação do vetor SHA-256d.", 11, MUTED, false);
-            bitcoinResult.setPadding(dp(4), dp(8), dp(4), dp(8));
-            config.addView(bitcoinResult);
-            bitcoinTest.setOnClickListener(v -> {
-                try {
-                    String calculated = BitcoinSha256d.hashHeaderHex(BitcoinSha256d.GENESIS_HEADER_HEX);
-                    boolean valid = BitcoinSha256d.GENESIS_BLOCK_HASH.equals(calculated);
-                    bitcoinResult.setText((valid ? "VETOR VÁLIDO\n" : "FALHA NA VALIDAÇÃO\n") + calculated);
-                    bitcoinResult.setTextColor(valid ? GREEN : RED);
-                } catch (Exception e) {
-                    bitcoinResult.setText("Erro no teste SHA-256d: " + e.getClass().getSimpleName());
-                    bitcoinResult.setTextColor(RED);
-                }
-            });
-        }
-
         TextView walletLabel = label("Carteira de recebimento");
-        if (selectedCoin != 3) config.addView(walletLabel);
+        config.addView(walletLabel);
         EditText wallet = edit("Endereço público da carteira", false);
         wallet.setSingleLine(true);
         wallet.setText(prefs.getString(walletKey(selectedCoin), ""));
-        if (selectedCoin != 3) config.addView(wallet, editParams());
+        config.addView(wallet, editParams());
         TextView poolLabel = label("Pool e porta");
         LinearLayout.LayoutParams poolLabelLp = new LinearLayout.LayoutParams(-1, -2);
         poolLabelLp.topMargin = dp(10);
-        if (selectedCoin != 3) config.addView(poolLabel, poolLabelLp);
+        config.addView(poolLabel, poolLabelLp);
         EditText pool = edit("stratum+tcp://servidor:porta", false);
         pool.setSingleLine(true);
         pool.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         pool.setText(prefs.getString(poolKey(selectedCoin), ""));
-        if (selectedCoin != 3) config.addView(pool, editParams());
+        config.addView(pool, editParams());
 
         final int[] activeCoin = {selectedCoin};
         wallet.addTextChangedListener(simpleWatcher(s -> prefs.edit().putString(walletKey(activeCoin[0]), s).apply()));
@@ -329,9 +302,7 @@ public class MainActivity extends Activity {
             }
             @Override public void onNothingSelected(AdapterView<?> parent) { }
         });
-        if (selectedCoin != 3) {
-            note(config, "Confira se a pool aceita exatamente esta moeda e algoritmo antes de usar o motor real.");
-        }
+        note(config, "Confira se a pool aceita exatamente esta moeda e algoritmo antes de usar o motor.");
 
         LinearLayout guard = card(content);
         cardHeading(guard, "Proteção do dispositivo", "Limites previstos para a futura sessão de mineração.");
@@ -344,14 +315,8 @@ public class MainActivity extends Activity {
         guard.addView(guardRow);
         note(guard, "A temperatura apresentada é a do sensor de bateria, quando disponível; ela não representa necessariamente a temperatura da CPU.");
 
-        Button start = primaryButton(selectedCoin == 3
-                ? "Bitcoin · validação offline (sem mineração)" : "▶  Iniciar mineração");
-        if (selectedCoin == 3) start.setEnabled(false);
+        Button start = primaryButton("▶  Iniciar mineração");
         start.setOnClickListener(v -> {
-            if (coinSpinner.getSelectedItemPosition() == 3) {
-                toast("Bitcoin está no modo de validação SHA-256d offline; nenhuma mineração é executada no celular.");
-                return;
-            }
             BatteryInfo current = getBatteryInfo();
             if (current.level < 0) {
                 toast("Bloqueado: não foi possível ler o nível da bateria.");
@@ -449,7 +414,7 @@ public class MainActivity extends Activity {
             int activeCoin = prefs.getInt("miner_active_coin_index", -1);
             String coinShares = i == activeCoin
                     ? prefs.getInt("miner_accepted", 0) + " shares aceitas"
-                    : i == 3 ? "motor não instalado" : "sem sessão nesta moeda";
+                    : "sem sessão nesta moeda";
             line.addView(text(coinShares, 11, MUTED, false));
             perCoin.addView(line);
             if (i < coins.length - 1) divider(perCoin);
