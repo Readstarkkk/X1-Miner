@@ -134,8 +134,12 @@ public final class MiningService extends Service {
     private void startEngine(Intent intent, int startId) {
         try {
             int coinIndex = intent.getIntExtra(EXTRA_COIN_INDEX, 0);
+            if (coinIndex == 3) {
+                failStart(startId, "Bitcoin: este módulo oferece apenas validação SHA-256d offline; mineração e conexão com pools não estão habilitadas no celular.");
+                return;
+            }
             if (coinIndex < 0 || coinIndex > 2) {
-                failStart(startId, "Bitcoin (SHA-256d) ainda não possui motor integrado. Esta versão suporta Monero, Dogecoin e Litecoin.");
+                failStart(startId, "Moeda inválida. Esta sessão aceita apenas os motores já integrados.");
                 return;
             }
             activeCoinIndex = coinIndex;

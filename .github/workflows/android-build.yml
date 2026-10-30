@@ -49,6 +49,9 @@ jobs:
       - name: Build experimental Scrypt runtime for Android ARM64
         run: bash scripts/build-scrypt-android.sh
 
+      - name: Run offline SHA-256d unit tests
+        run: gradle --no-daemon --stacktrace testDebugUnitTest
+
       - name: Build debug APK
         run: gradle --no-daemon --stacktrace assembleDebug
 

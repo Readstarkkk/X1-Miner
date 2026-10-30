@@ -23,6 +23,10 @@ Compilação
 3. Execute o workflow, se necessário.
 4. Após uma compilação bem-sucedida, baixe o APK na seção de artefatos da execução.
 
+Bitcoin (BTC) — laboratório SHA-256d
+
+A opção Bitcoin nesta atualização executa somente uma validação offline de um cabeçalho de 80 bytes, usando o bloco gênese como vetor conhecido. Ela não faz busca de nonce, mineração contínua, conexão Stratum, envio de shares ou estimativa de ganhos. O botão de mineração fica desativado para BTC.
+
 Estado do projeto
 
 O projeto está em desenvolvimento. O motor de mineração real, a conexão com pools e o backend de Node precisam ser implementados e testados antes de serem considerados funcionais.
