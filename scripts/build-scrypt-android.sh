@@ -41,7 +41,8 @@ make -j2
 make install
 
 # cpuminer-opt includes curl/curl.h; build a static, non-TLS curl for HTTP RPC support.
-# This Scrypt integration deliberately accepts only stratum+tcp URLs (no pool TLS yet).
+# The same cpuminer-opt binary includes Skein+SHA-256, used by the DGB profile.
+# This integration deliberately accepts only stratum+tcp URLs (no pool TLS yet).
 cd "$BUILD"
 curl --fail --location --retry 3 --retry-all-errors \
   "https://curl.se/download/curl-8.16.0.tar.xz" -o curl-8.16.0.tar.xz
@@ -57,7 +58,7 @@ CC="$CC" AR="$AR" RANLIB="$RANLIB" CFLAGS="-O2 -fPIC" \
 make -j2
 make install
 
-# Build a known cpuminer-opt source revision with Scrypt/NEON support.
+# Build a pinned cpuminer-opt source revision with Scrypt and Skein support for ARM64.
 cd "$BUILD"
 git init cpuminer-opt
 cd cpuminer-opt
@@ -95,4 +96,4 @@ chmod 644 "$ROOT/app/src/main/jniLibs/arm64-v8a/libc++_shared.so"
 
 echo "Packaged Android C++ runtime for ARM64."
 file "$ROOT/app/src/main/jniLibs/arm64-v8a/libcpuminer.so"
-echo "Built experimental Android ARM64 Scrypt engine: app/src/main/jniLibs/arm64-v8a/libcpuminer.so"
+echo "Built experimental Android ARM64 Scrypt/Skein engine: app/src/main/jniLibs/arm64-v8a/libcpuminer.so"

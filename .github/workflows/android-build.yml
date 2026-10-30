@@ -48,7 +48,7 @@ jobs:
           test "$(git hash-object app/src/main/jniLibs/arm64-v8a/libxmrig.so)" = "808c0a69c27b70620f47adc76a573e539715211d"
           chmod 755 app/src/main/jniLibs/arm64-v8a/libxmrig.so
 
-      - name: Build experimental Scrypt runtime for Android ARM64
+      - name: Build experimental Scrypt/Skein runtime for Android ARM64
         run: bash scripts/build-scrypt-android.sh
 
       - name: Run offline SHA-256d unit tests

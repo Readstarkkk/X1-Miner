@@ -68,9 +68,9 @@ public class MainActivity extends Activity {
 
     private final String[] tabNames = {"Minerar", "Gráfico", "Configurações", "Node"};
     private final String[] tabGlyphs = {"⛏", "▥", "⚙", "⌘"};
-    private final String[] coins = {"Monero (XMR)", "Dogecoin (DOGE)", "Litecoin (LTC)"};
-    private final String[] coinKeys = {"xmr", "doge", "ltc"};
-    private final String[] algorithms = {"RandomX", "Scrypt", "Scrypt"};
+    private final String[] coins = {"Monero (XMR)", "Dogecoin (DOGE)", "Litecoin (LTC)", "DigiByte (DGB)"};
+    private final String[] coinKeys = {"xmr", "doge", "ltc", "dgb"};
+    private final String[] algorithms = {"RandomX", "Scrypt", "Scrypt", "Skein + SHA-256"};
     private final String[] units = {"H/s", "kH/s", "MH/s", "GH/s", "TH/s"};
 
     private SharedPreferences prefs;
@@ -233,7 +233,9 @@ public class MainActivity extends Activity {
                 : "error".equals(engineState) ? RED
                 : "connecting".equals(engineState) ? GOLD : MUTED;
         rowTitle(status, "STATUS DO MOTOR", stateLabel, stateColor);
-        String engineLabel = displayedCoinIndex == 0 ? "Motor nativo · Monero / RandomX" : "Motor nativo · Scrypt";
+        String engineLabel = displayedCoinIndex == 0 ? "Motor nativo · Monero / RandomX"
+                : displayedCoinIndex == 3 ? "Motor ARM64 · DigiByte / Skein + SHA-256"
+                : "Motor nativo · Scrypt";
         TextView engine = text(engineLabel, 16, WHITE, true);
         LinearLayout.LayoutParams engineLp = new LinearLayout.LayoutParams(-1, -2);
         engineLp.topMargin = dp(6);
@@ -302,7 +304,11 @@ public class MainActivity extends Activity {
             }
             @Override public void onNothingSelected(AdapterView<?> parent) { }
         });
-        note(config, "Confira se a pool aceita exatamente esta moeda e algoritmo antes de usar o motor.");
+        if (selectedCoin == 3) {
+        note(config, "DigiByte utiliza Skein-512 seguido de SHA-256. A quantidade de threads segue a configuração do aplicativo.");
+        } else {
+            note(config, "Confira se a pool aceita exatamente esta moeda e algoritmo antes de usar o motor.");
+        }
 
         LinearLayout guard = card(content);
         cardHeading(guard, "Proteção do dispositivo", "Limites previstos para a futura sessão de mineração.");
@@ -330,8 +336,9 @@ public class MainActivity extends Activity {
                 toast("Bloqueado: não foi possível ler a temperatura da bateria.");
                 return;
             }
-            if (current.temperatureC >= 44.0) {
-                toast("Bloqueado: temperatura da bateria em 44 °C ou mais.");
+            double temperatureLimit = coinSpinner.getSelectedItemPosition() == 3 ? 42.0 : 44.0;
+            if (current.temperatureC >= temperatureLimit) {
+                toast("Bloqueado: temperatura da bateria acima do limite para esta moeda.");
                 return;
             }
             if (wallet.getText().toString().trim().isEmpty()) {
@@ -359,7 +366,9 @@ public class MainActivity extends Activity {
             if (prefs.getBoolean("confirm_start", true)) {
                 new AlertDialog.Builder(MainActivity.this)
                         .setTitle("Iniciar " + coinSpinner.getSelectedItem().toString() + "?")
-                        .setMessage("A mineração mantém a CPU ocupada e pode aquecer o aparelho. O motor começa limitado a uma fração dos núcleos.")
+                        .setMessage(coinSpinner.getSelectedItemPosition() == 3
+                                ? "DGB/Skein utilizará a quantidade de threads selecionada nas configurações."
+                                : "A mineração mantém a CPU ocupada e pode aquecer o aparelho. O motor começa limitado a uma fração dos núcleos.")
                         .setNegativeButton("Cancelar", (dialog, which) -> { })
                         .setPositiveButton("Iniciar", (dialog, which) -> launchMiner.run())
                         .show();

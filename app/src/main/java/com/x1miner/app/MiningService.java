@@ -31,7 +31,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** Native ARM64 XMRig process manager. This engine currently supports Monero/RandomX only. */
+/** Native ARM64 process manager for RandomX and experimental cpuminer-opt algorithms. */
 public final class MiningService extends Service {
     public static final String ACTION_START = "com.x1miner.app.MINER_START";
     public static final String ACTION_STOP = "com.x1miner.app.MINER_STOP";
@@ -60,6 +60,12 @@ public final class MiningService extends Service {
         @Override public void run() {
             if (!running || stopping) return;
             BatteryInfo battery = readBatteryInfo();
+            if (activeCoinIndex == 3 && (battery.temperatureC < 0 || battery.temperatureC >= 42.0)) {
+                stopEngine(true, "Proteção DGB/Skein: temperatura da bateria indisponível ou em 42 °C ou mais.");
+                stopForeground(STOP_FOREGROUND_REMOVE);
+                stopSelf();
+                return;
+            }
             if (prefs.getBoolean("protect_battery", true) && (battery.level < 0 || battery.level < 20)) {
                 stopEngine(true, "Proteção automática: bateria abaixo de 20% ou leitura indisponível.");
                 stopForeground(STOP_FOREGROUND_REMOVE);
@@ -75,8 +81,12 @@ public final class MiningService extends Service {
             if (Build.VERSION.SDK_INT >= 29) {
                 try {
                     PowerManager power = (PowerManager) getSystemService(POWER_SERVICE);
-                    if (power != null && power.getCurrentThermalStatus() >= PowerManager.THERMAL_STATUS_SEVERE) {
-                        stopEngine(true, "Proteção automática: Android reportou estado térmico severo.");
+                    int thermalLimit = activeCoinIndex == 3
+                            ? PowerManager.THERMAL_STATUS_MODERATE : PowerManager.THERMAL_STATUS_SEVERE;
+                    if (power != null && power.getCurrentThermalStatus() >= thermalLimit) {
+                        stopEngine(true, activeCoinIndex == 3
+                                ? "Proteção DGB/Skein: Android reportou aquecimento moderado."
+                                : "Proteção automática: Android reportou estado térmico severo.");
                         stopForeground(STOP_FOREGROUND_REMOVE);
                         stopSelf();
                         return;
@@ -92,6 +102,7 @@ public final class MiningService extends Service {
     private volatile int activeCoinIndex = 0;
     private volatile int activeThreadCount = 1;
     private volatile String activeCoinName = "Monero";
+    private volatile String activeAlgorithmName = "RandomX";
     private final Map<Integer, Double> perThreadHashrates = new HashMap<>();
     private long sessionStartedAt;
     private long lastNotificationUpdate;
@@ -134,16 +145,20 @@ public final class MiningService extends Service {
     private void startEngine(Intent intent, int startId) {
         try {
             int coinIndex = intent.getIntExtra(EXTRA_COIN_INDEX, 0);
-            if (coinIndex < 0 || coinIndex > 2) {
+            if (coinIndex < 0 || coinIndex > 3) {
                 failStart(startId, "Moeda inválida. Esta sessão aceita apenas os motores já integrados.");
                 return;
             }
             activeCoinIndex = coinIndex;
-            activeCoinName = coinIndex == 0 ? "Monero" : (coinIndex == 1 ? "Dogecoin" : "Litecoin");
+            activeCoinName = coinIndex == 0 ? "Monero"
+                    : coinIndex == 1 ? "Dogecoin"
+                    : coinIndex == 2 ? "Litecoin" : "DigiByte";
+            activeAlgorithmName = coinIndex == 0 ? "RandomX"
+                    : coinIndex == 3 ? "Skein + SHA-256" : "Scrypt";
             String wallet = intent.getStringExtra(EXTRA_WALLET);
             String poolInput = intent.getStringExtra(EXTRA_POOL);
             if (wallet == null || wallet.trim().isEmpty()) {
-                failStart(startId, "Informe o endereço público da carteira Monero.");
+                failStart(startId, "Informe o endereço público da carteira da moeda selecionada.");
                 return;
             }
             PoolAddress pool = PoolAddress.parse(poolInput);
@@ -152,7 +167,7 @@ public final class MiningService extends Service {
                 return;
             }
             if (coinIndex != 0 && pool.tls) {
-                failStart(startId, "O motor Scrypt experimental desta versão aceita apenas Stratum TCP sem TLS. Use host:porta ou stratum+tcp://host:porta.");
+                failStart(startId, "O motor experimental cpuminer-opt desta versão aceita apenas Stratum TCP sem TLS. Use host:porta ou stratum+tcp://host:porta.");
                 return;
             }
 
@@ -182,11 +197,12 @@ public final class MiningService extends Service {
             } else {
                 executable = new File(getApplicationInfo().nativeLibraryDir, "libcpuminer.so");
                 if (!executable.isFile() || !executable.canExecute()) {
-                    failStart(startId, "Motor Scrypt ARM64 ausente. O build experimental cpuminer-opt não foi empacotado.");
+                    failStart(startId, "Motor ARM64 cpuminer-opt ausente. Confira o build experimental no GitHub Actions.");
                     return;
                 }
                 String poolUrl = "stratum+tcp://" + pool.host + ":" + pool.port;
-                builder = new ProcessBuilder(executable.getAbsolutePath(), "-a", "scrypt", "-o", poolUrl,
+                String algorithm = coinIndex == 3 ? "skein" : "scrypt";
+                builder = new ProcessBuilder(executable.getAbsolutePath(), "-a", algorithm, "-o", poolUrl,
                         "-u", wallet.trim(), "-p", "x", "-t", Integer.toString(threads), "--hash-meter");
             }
             if (coinIndex != 0) {
@@ -213,7 +229,7 @@ public final class MiningService extends Service {
             synchronized (this) { perThreadHashrates.clear(); }
             activeThreadCount = threads;
             prefs.edit().putInt("miner_active_coin_index", coinIndex).apply();
-            appendEngineLog("Motor " + activeCoinName + " / " + (coinIndex == 0 ? "RandomX" : "Scrypt")
+            appendEngineLog("Motor " + activeCoinName + " / " + activeAlgorithmName
                     + " iniciado; threads configuradas: " + threads + ".");
             running = true;
             stopping = false;
@@ -331,7 +347,7 @@ public final class MiningService extends Service {
         } else if (activeCoinIndex != 0 && (lower.contains("stratum connection established")
                 || lower.contains("new block") || lower.contains("stratum difficulty")
                 || lower.contains("accepted "))) {
-            storeState("running", "Motor Scrypt ativo; recebeu/validou trabalho da pool.");
+            storeState("running", "Motor " + activeAlgorithmName + " ativo; recebeu/validou trabalho da pool.");
         }
 
         if (activeCoinIndex == 0) {
@@ -360,7 +376,7 @@ public final class MiningService extends Service {
                 try {
                     String count = accepted.group(1) != null ? accepted.group(1) : accepted.group(2);
                     acceptedShares = Integer.parseInt(count);
-                    storeState("running", "Motor Scrypt ativo; a pool reportou shares aceitas.");
+                    storeState("running", "Motor " + activeAlgorithmName + " ativo; a pool reportou shares aceitas.");
                     saveStats();
                 } catch (NumberFormatException ignored) { }
             }
